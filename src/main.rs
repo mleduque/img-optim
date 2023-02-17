@@ -4,6 +4,7 @@ use anyhow::{Result};
 use clap::Clap;
 use glob::glob;
 use path_absolutize::*;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
 
@@ -12,6 +13,14 @@ use std::process::Command;
 struct Opts {
     source: String,
     target: String,
+    #[clap(long, short)]
+    quality: Option<String>,
+    #[clap(long, short)]
+    geometry: Option<String>,
+    #[clap(long, short)]
+    define: Option<String>,
+    #[clap(long, short)]
+    extension: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -31,7 +40,7 @@ fn main() -> Result<()> {
         }
     };
     println!("unpack ok");
-    process_files(&pattern, &out_dir.path())?;
+    process_files(&pattern, &out_dir.path(), &opts)?;
     println!("process ok");
     repack_output(&out_dir, &target_zip)
 }
@@ -70,8 +79,8 @@ fn unpack_archive(zip_path: &Path, tmp_dir: &tempfile::TempDir) -> Result<()> {
     Ok(())
 }
 
-fn optimize_images(source_glob: &str, target_dir: &str) -> Result<()> {
-    
+fn optimize_images(source_glob: &str, target_dir: &str, opts: &Opts) -> Result<()> {
+
     let target = Path::new(target_dir);
     if target.exists() {
         if target.is_dir() {
@@ -96,17 +105,17 @@ fn optimize_images(source_glob: &str, target_dir: &str) -> Result<()> {
         std::fs::create_dir(target)?;
     }
 
-    process_files(source_glob, target)
+    process_files(source_glob, target, opts)
 }
 
-fn process_files(source_glob: &str, target: &Path) -> Result<()> {
+fn process_files(source_glob: &str, target: &Path, opts: &Opts) -> Result<()> {
     for entry in glob(&source_glob)? {
         println!("{:?}", entry);
         match entry {
             Ok(ref path) => {
                 if path.is_file() {
                     match path.absolutize() {
-                        Ok(canon) => match process_one_file(&canon, &target) {
+                        Ok(canon) => match process_one_file(&canon, &target, opts) {
                                         Ok(_) => {}
                                         Err(error) => {
                                             println!("{}", error);
@@ -129,20 +138,26 @@ fn process_files(source_glob: &str, target: &Path) -> Result<()> {
     Ok(())
 }
 
-fn process_one_file(item: &Path, target: &Path) -> Result<()> {
+fn process_one_file(item: &Path, target: &Path, opts: &Opts) -> Result<()> {
     if let Some(file_name) = item.file_name() {
-        let result = target.join(file_name).with_extension("jpg");
-        let output = Command::new("gm")
-        .arg("convert")
-        .arg(item.as_os_str())
-        .arg("-geometry")
-        .arg("800x1200^") // 1200 max width, 800 max height, using the biggest dimension ; the other is computed to keep aspect ratio
-        .arg(&result)
-        .output()?;
+        let result = target.join(file_name).with_extension(&opts.extension.as_deref().unwrap_or("jpg"));
+        let mut args: Vec<String> = vec![
+            "convert".to_string(), item.as_os_str().to_str().unwrap().to_string(),
+            "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("100x1400^").to_string(),
+            "-quality".to_string(), opts.quality.as_deref().unwrap_or("80").to_string(),
+        ];
+
+        if let Some(define) = &opts.define {
+            args.push("define".to_string());
+            args.push(define.to_string());
+        }
+        args.push(result.to_str().unwrap().to_string());
+
+        let output = Command::new("gm").args(args).output()?;
         if output.status.success() {
             Ok(())
         } else {
-            let error = format!("`gm convert` invocation failed\n====\n{}\n===\n{}\n====", 
+            let error = format!("`gm convert` invocation failed\n====\n{}\n===\n{}\n====",
             String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
             Err(anyhow!(error))
         }
