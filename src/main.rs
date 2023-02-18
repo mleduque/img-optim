@@ -166,7 +166,7 @@ fn process_one_image(item: &Path, source: &Path, target: &Path, opts: &Opts) -> 
 
     let mut args: Vec<String> = vec![
         "convert".to_string(), item.as_os_str().to_str().unwrap().to_string(),
-        "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("100x1400^").to_string(),
+        "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("1000x1400^").to_string(),
         "-quality".to_string(), opts.quality.as_deref().unwrap_or("80").to_string(),
     ];
 
