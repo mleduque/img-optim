@@ -2,10 +2,13 @@
 use anyhow::anyhow;
 use anyhow::{Result};
 use clap::Clap;
-use glob::glob;
+use env_logger::{Env, Target};
+use globwalk::FileType as GlobFileType;
+use lazy_static::lazy_static;
+use log::{info, debug, warn, error};
 use path_absolutize::*;
-use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::fs::{create_dir_all};
+use std::path::{Path};
 use std::process::Command;
 
 #[derive(Clap)]
@@ -24,25 +27,31 @@ struct Opts {
 }
 
 fn main() -> Result<()> {
-    let opts: Opts = Opts::parse();
-    let dir = tempfile::tempdir()?;
-    let out_dir = tempfile::tempdir()?;
-    println!("temp dirs ok");
-    let target_zip = Path::new(&opts.target).absolutize()?;
-    println!("absolutize ok");
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug"))
+                            .target(Target::Stdout)
+                            .init();
 
-    unpack_archive(&Path::new(&opts.source).absolutize()?.to_owned(), &dir)?;
-    let pattern = match dir.path().to_str() {
-        Some(path) => path.to_owned() + "/*",
-        None => {
-            println!("invalid temp file path {:?}", dir.path());
-            return Err(anyhow!("invalid temp file path"));
-        }
-    };
-    println!("unpack ok");
-    process_files(&pattern, &out_dir.path(), &opts)?;
-    println!("process ok");
-    repack_output(&out_dir, &target_zip)
+    let opts: Opts = Opts::parse();
+    info!("creating temp dirs");
+    let unpack_dir = tempfile::Builder::new().prefix("img-optim-unpack").tempdir()?;
+    let processed_dir = tempfile::Builder::new().prefix("img-optim-uprocessed").tempdir()?;
+    info!("temp dirs created [unpack_dir={:?} processed_dir={:?}]", unpack_dir, processed_dir);
+
+    let target_zip = Path::new(&opts.target).absolutize()?;
+    info!("target zip path: {:?}",target_zip);
+
+    info!("start unpacking");
+    unpack_archive(&Path::new(&opts.source).absolutize()?.to_owned(), &unpack_dir)?;
+    info!("unpacking done");
+
+    info!("start processing files");
+    process_files(&unpack_dir.path(), &processed_dir.path(), &opts)?;
+    info!("processing done");
+
+    info!("start zipping output");
+    let result = repack_output(&processed_dir, &target_zip);
+    info!("zipping done");
+    result
 }
 
 fn unpack_archive(zip_path: &Path, tmp_dir: &tempfile::TempDir) -> Result<()> {
@@ -54,16 +63,15 @@ fn unpack_archive(zip_path: &Path, tmp_dir: &tempfile::TempDir) -> Result<()> {
             Some(path) => path.to_owned(),
             None => return Err(anyhow!("invalid name for file in archive: {:?}", file.mangled_name())),
         };
+        let full_out_path = tmp_dir.path().join(&out_path);
+        debug!("unpack {:?} to {:?}", out_path, full_out_path);
 
         if (&*file.name()).ends_with('/') {
-            std::fs::create_dir_all(tmp_dir.path().join(&out_path))?;
+            debug!("create dir {:?}", full_out_path);
+            std::fs::create_dir_all(full_out_path)?;
         } else {
-            if let Some(p) = out_path.parent() {
-                if !p.exists() {
-                    std::fs::create_dir_all(tmp_dir.path().join(&p))?;
-                }
-            }
-            let mut out_file = std::fs::File::create(tmp_dir.path().join(&out_path))?;
+            create_parent(&full_out_path)?;
+            let mut out_file = std::fs::File::create(full_out_path)?;
             std::io::copy(&mut file, &mut out_file)?;
         }
                 // Get and Set permissions
@@ -79,95 +87,135 @@ fn unpack_archive(zip_path: &Path, tmp_dir: &tempfile::TempDir) -> Result<()> {
     Ok(())
 }
 
-fn optimize_images(source_glob: &str, target_dir: &str, opts: &Opts) -> Result<()> {
+fn process_files(source: &dyn AsRef<Path>, target: &Path, opts: &Opts) -> Result<()> {
+    let walker = globwalk::GlobWalkerBuilder::from_patterns(
+        source,
+        &[ "**/*" ],
+    )
+    .file_type(GlobFileType::FILE | GlobFileType::DIR)
+    .contents_first(false) // directory before content
+    .build()?
+    .into_iter()
+    .filter_map(Result::ok);
 
-    let target = Path::new(target_dir);
-    if target.exists() {
-        if target.is_dir() {
-            // continue only if it's empty
-            match target.read_dir() {
+    for entry in walker {
+        let entry_type = entry.file_type();
+        debug!("{:?} type {:?}", entry, entry_type);
+        if entry_type.is_dir() {
+            // create dir in destination
+            let path = entry.path();
+            match path.absolutize() {
+                Ok(canon) => {
+                    info!("create directory {:?}", canon);
+                    create_dir_all(canon)?
+                },
                 Err(error) => {
-                    println!("error reading target directory content ({}) - aborting", target.to_string_lossy());
-                    return Err(anyhow!(error));
+                    warn!("couldn't absolutize path {:?} - {:?}", entry, error);
                 }
-                Ok(mut content) => {
-                    if let Some(_) = content.next() {
-                        println!("existing target path {} is not empty - aborting", target.to_string_lossy());
-                        return Err(anyhow!("target path is not empty"));
+            }
+        } else if entry_type.is_file() {
+            // process file
+            let path = entry.path();
+            match path.absolutize() {
+                Ok(canon) => match process_one_file(&canon, source.as_ref(), target, opts) {
+                    Ok(_) => {}
+                    Err(error) => {
+                        error!("{}", error);
+                        // continue with other files
                     }
+                }
+                Err(error) => {
+                    warn!("couldn't absolutize path {:?} - {:?}", entry, error);
                 }
             }
         } else {
-            println!("existing target path {} is not a directory - aborting", target.to_string_lossy());
-            return Err(anyhow!("target path is not a directory"));
+            println!("{:?} is not a file or directory, skipping", entry);
         }
-    } else {
-        std::fs::create_dir(target)?;
-    }
 
-    process_files(source_glob, target, opts)
-}
-
-fn process_files(source_glob: &str, target: &Path, opts: &Opts) -> Result<()> {
-    for entry in glob(&source_glob)? {
-        println!("{:?}", entry);
-        match entry {
-            Ok(ref path) => {
-                if path.is_file() {
-                    match path.absolutize() {
-                        Ok(canon) => match process_one_file(&canon, &target, opts) {
-                                        Ok(_) => {}
-                                        Err(error) => {
-                                            println!("{}", error);
-                                            // continue with other files
-                                        }
-                                    }
-                        Err(error) => {
-                            println!("couldn't absolutize path {:?} - {:?}", entry, error);
-                        }
-                    }
-                } else {
-                    println!("{:?} is not a file, skipping", entry);
-                }
-            }
-            Err(err) => {
-                println!("{:?}", err);
-            }
-        }
     }
     Ok(())
 }
 
-fn process_one_file(item: &Path, target: &Path, opts: &Opts) -> Result<()> {
-    if let Some(file_name) = item.file_name() {
-        let result = target.join(file_name).with_extension(&opts.extension.as_deref().unwrap_or("jpg"));
-        let mut args: Vec<String> = vec![
-            "convert".to_string(), item.as_os_str().to_str().unwrap().to_string(),
-            "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("100x1400^").to_string(),
-            "-quality".to_string(), opts.quality.as_deref().unwrap_or("80").to_string(),
-        ];
+lazy_static! {
+    static ref IMAGE_EXTENSIONS: Vec<&'static str> = vec!["jpg", "png", "webp", "avif", "gif"];
+}
 
-        if let Some(define) = &opts.define {
-            args.push("define".to_string());
-            args.push(define.to_string());
-        }
-        args.push(result.to_str().unwrap().to_string());
-
-        let output = Command::new("gm").args(args).output()?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            let error = format!("`gm convert` invocation failed\n====\n{}\n===\n{}\n====",
-            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-            Err(anyhow!(error))
-        }
+fn process_one_file(item: &Path, source: &Path, target: &Path, opts: &Opts) -> Result<()> {
+    let extension = item.extension()
+                .map_or_else(
+                    || "".to_string(),
+                    |ext| ext.to_str().unwrap_or("").to_string()
+                );
+    if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        process_one_image(item, source, target, opts)
     } else {
-        Err(anyhow!("path{} has no filename, skipping", item.to_string_lossy()))
+        let sub_path = item.strip_prefix(source)?;
+        let destination = target.join(sub_path);
+        let _ = std::fs::copy(item, destination);
+        Ok(())
     }
 }
+
+fn process_one_image(item: &Path, source: &Path, target: &Path, opts: &Opts) -> Result<()> {
+    let sub_path = item.strip_prefix(source)?;
+
+    let result = target.join(sub_path)
+        .with_extension(&opts.extension.as_deref()
+        .unwrap_or("jpg"));
+    create_parent(&result)?;
+
+    let mut args: Vec<String> = vec![
+        "convert".to_string(), item.as_os_str().to_str().unwrap().to_string(),
+        "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("100x1400^").to_string(),
+        "-quality".to_string(), opts.quality.as_deref().unwrap_or("80").to_string(),
+    ];
+
+    if let Some(define) = &opts.define {
+        args.push("define".to_string());
+        args.push(define.to_string());
+    }
+    args.push(result.to_str().unwrap().to_string());
+
+    let mut command = Command::new("gm");
+    command.args(args);
+    debug!("Command: {:?}", command);
+
+    let output = command.output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let error = format!("`gm convert` invocation failed\n{}\n",
+        String::from_utf8_lossy(&output.stderr));
+        Err(anyhow!(error))
+    }
+}
+
 fn repack_output(dir: &tempfile::TempDir, zip: &Path) -> Result<()> {
-    use zip::CompressionMethod;
-    let options = zip::write::FileOptions::default().compression_method(CompressionMethod::Stored);
-    zip_extensions::write::zip_create_from_directory_with_options(&zip.to_owned(), &dir.path().to_owned(), options)?;
+    let zip_path= zip.to_str().unwrap();
+    let orig_path = dir.path().to_str().unwrap();
+    let mut command = Command::new("zip");
+    command.args(vec![
+        "--recurse-paths",
+        zip_path, // zip file
+        orig_path, // what to add
+    ]);
+
+    let output = command.output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let error = format!("`zip` invocation failed\n{}\n",
+        String::from_utf8_lossy(&output.stderr));
+        Err(anyhow!(error))
+    }
+}
+
+fn create_parent(file_path: &Path) -> Result<()> {
+    if let Some(parent) = file_path.parent() {
+        if !parent.exists() {
+            debug!("create directory {:?}", parent);
+        }
+        std::fs::create_dir_all(parent)?;
+    }
     Ok(())
 }
