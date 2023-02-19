@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "img-optim"
-version = "1.1.1"
+version = "1.1.1-dev"
 dependencies = [
  "anyhow",
  "clap",
