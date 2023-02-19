@@ -267,13 +267,13 @@ fn process_one_image(item: &Path, source: &Path, target: &Path, opts: &Opts) -> 
 
 fn repack_output(dir: &tempfile::TempDir, zip: &Path) -> Result<()> {
     let zip_path= zip.to_str().unwrap();
-    let orig_path = dir.path().to_str().unwrap();
     let mut command = Command::new("zip");
     command.args(vec![
         "--recurse-paths",
         zip_path, // zip file
-        orig_path, // what to add
+        "." // what to add
     ]);
+    command.current_dir(dir);
 
     let output = command.output()?;
     if output.status.success() {
