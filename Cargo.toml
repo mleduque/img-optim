@@ -9,10 +9,12 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.1.6", features = ["derive"]}
+dialoguer = "0.10.3"
 env_logger = "0.10.0"
 globwalk = "0.8.1"
 lazy_static = "1.4.0"
 log = "0.4.17"
 path-absolutize = "3.0.14"
+regex = "1.7.1"
 tempfile = "3.2.0"
 zip = "0.6.4"

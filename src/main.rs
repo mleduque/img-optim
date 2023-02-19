@@ -1,17 +1,19 @@
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use anyhow::{Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser};
+use dialoguer::Confirm;
 use env_logger::{Env, Target};
-use globwalk::FileType as GlobFileType;
+use globwalk::{FileType as GlobFileType, glob_builder};
 use lazy_static::lazy_static;
 use log::{info, debug, warn, error};
 use path_absolutize::*;
+use regex::{Regex, escape};
 use std::fs::{create_dir_all};
 use std::path::{Path};
 use std::process::Command;
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(version = "1.0", author = "Mickaël Leduque <mleduque@gmail.com>")]
 struct Opts {
     source: String,
@@ -24,6 +26,8 @@ struct Opts {
     define: Option<String>,
     #[clap(long, short)]
     extension: Option<String>,
+    #[clap(long, short)]
+    many: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -32,6 +36,77 @@ fn main() -> Result<()> {
                             .init();
 
     let opts: Opts = Opts::parse();
+    match &opts.many {
+        Some(pattern) => {
+            let parts = resolve_pattern(&opts, pattern)?;
+            for part in &parts {
+                println!("{} => {}", part.source, part.target);
+            }
+
+            if Confirm::new().with_prompt("Do you want to continue?").interact()? {
+                println!("Processing archives...");
+                for part in parts.iter() {
+                    process_archive(&part)?;
+                }
+            }
+            Ok(())
+        },
+        None => process_archive(&opts),
+    }
+}
+
+fn resolve_pattern(opts:&Opts, pattern: &str) -> Result<Vec<Opts>> {
+    let pattern_len = pattern.len();
+    let glob_pattern = if !opts.source.contains(pattern) {
+        bail!("source name {} doesn't contain pattern {}",opts.source, pattern);
+    } else {
+        let escaped = escape_glob(&opts.source);
+        let glob = escaped.replace(pattern, &"?".repeat(pattern_len));
+        debug!("using glob '{}'", glob);
+        glob
+    };
+    let source_regex = if !opts.source.contains(pattern) {
+        bail!("source name {} doesn't contain pattern {}",opts.source, pattern);
+    } else {
+        let regex_pattern = escape(&opts.source).replace(pattern, &format!("(.{{{}}})", pattern_len));
+        debug!("using pattern '{}'", regex_pattern);
+        Regex::new(&regex_pattern)?
+    };
+
+    if !opts.target.contains(pattern) {
+        bail!("target name {} doesn't contain pattern {}",opts.target, pattern);
+    }
+
+    let walker = glob_builder(glob_pattern)
+        .file_type(GlobFileType::FILE )
+        .sort_by(|a, b| a.path().to_str().unwrap().cmp(b.path().to_str().unwrap()))
+        .build()?
+        .into_iter()
+        .filter_map(Result::ok);
+
+    let mut result = vec![];
+    for entry in walker {
+        let path = entry.path().as_os_str().to_str().unwrap();
+        debug!("file: {}", path);
+        match source_regex.captures(path) {
+            None => bail!("no idea what happened"),
+            Some(captures) => {
+                let capture = captures.get(1).unwrap();
+                let value = capture.as_str();
+                let target_name = opts.target.replace(pattern, value);
+                result.push(Opts {
+                    source: path.to_string(),
+                    target: target_name,
+                    many: None,
+                    ..opts.clone()
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn process_archive(opts: &Opts)-> Result<()> {
     info!("creating temp dirs");
     let unpack_dir = tempfile::Builder::new().prefix("img-optim-unpack").tempdir()?;
     let processed_dir = tempfile::Builder::new().prefix("img-optim-uprocessed").tempdir()?;
@@ -218,4 +293,16 @@ fn create_parent(file_path: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     Ok(())
+}
+
+fn escape_glob(input: &str) -> String {
+    input.replace("!", r#"\!"#)
+        .replace("#", r#"\#"#)
+        .replace("*", r#"\*"#)
+        .replace("?", r#"\?"#)
+        .replace("#", r#"\#"#)
+        .replace("[", r#"\["#)
+        .replace("]", r#"\]"#)
+        .replace("{", r#"\{"#)
+        .replace("}", r#"\}"#)
 }
