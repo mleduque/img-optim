@@ -1,7 +1,7 @@
 
 use anyhow::anyhow;
 use anyhow::{Result};
-use clap::Clap;
+use clap::{Parser, Subcommand};
 use env_logger::{Env, Target};
 use globwalk::FileType as GlobFileType;
 use lazy_static::lazy_static;
@@ -11,8 +11,8 @@ use std::fs::{create_dir_all};
 use std::path::{Path};
 use std::process::Command;
 
-#[derive(Clap)]
-#[clap(version = "1.0", author = "Mickaël Leduque <mleduque@gmail.com>")]
+#[derive(Parser)]
+#[command(version = "1.0", author = "Mickaël Leduque <mleduque@gmail.com>")]
 struct Opts {
     source: String,
     target: String,
