@@ -1,6 +1,6 @@
 [package]
 name = "img-optim"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Mickaël <mleduque@gmail.com>"]
 edition = "2018"
 
