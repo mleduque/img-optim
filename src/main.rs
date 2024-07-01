@@ -28,6 +28,8 @@ struct Opts {
     extension: Option<String>,
     #[clap(long, short)]
     many: Option<String>,
+    #[clap(long, short)]
+    no_repack: Option<bool>,
 }
 
 fn main() -> Result<()> {
@@ -109,7 +111,7 @@ fn resolve_pattern(opts:&Opts, pattern: &str) -> Result<Vec<Opts>> {
 fn process_archive(opts: &Opts)-> Result<()> {
     info!("creating temp dirs");
     let unpack_dir = tempfile::Builder::new().prefix("img-optim-unpack").tempdir()?;
-    let processed_dir = tempfile::Builder::new().prefix("img-optim-uprocessed").tempdir()?;
+    let processed_dir = tempfile::Builder::new().prefix("img-optim-processed").tempdir()?;
     info!("temp dirs created [unpack_dir={:?} processed_dir={:?}]", unpack_dir, processed_dir);
 
     let target_zip = Path::new(&opts.target).absolutize()?;
@@ -123,9 +125,27 @@ fn process_archive(opts: &Opts)-> Result<()> {
     process_files(&unpack_dir.path(), &processed_dir.path(), &opts)?;
     info!("processing done");
 
-    info!("start zipping output");
-    let result = repack_output(&processed_dir, &target_zip);
-    info!("zipping done");
+    let result = match opts.no_repack {
+        None | Some(false) => {
+            info!("start zipping output");
+            let result = repack_output(&processed_dir, &target_zip);
+            info!("zipping done");
+            result
+        }
+        Some(true) => {
+            let temp_name = processed_dir.path().file_name()
+                    .map(|p| p.to_owned());
+            let dest_path = target_zip.into_owned();
+            let dest_path = dest_path.file_stem();
+            let persisted = processed_dir.into_path();
+            let copy_opt = fs_extra::dir::CopyOptions::new();
+            fs_extra::move_items(&vec![persisted], ".", &copy_opt)?;
+            match (temp_name, dest_path) {
+                (Some(old), Some(new)) => Ok(std::fs::rename(old, new)?),
+                _ => { Ok(()) }
+            }
+        }
+    };
     result
 }
 
@@ -212,7 +232,7 @@ fn process_files(source: &dyn AsRef<Path>, target: &Path, opts: &Opts) -> Result
 }
 
 lazy_static! {
-    static ref IMAGE_EXTENSIONS: Vec<&'static str> = vec!["jpg", "png", "webp", "avif", "gif"];
+    static ref IMAGE_EXTENSIONS: Vec<&'static str> = vec!["jpg","jpeg", "png", "webp", "avif", "gif"];
 }
 
 fn process_one_file(item: &Path, source: &Path, target: &Path, opts: &Opts) -> Result<()> {
@@ -221,7 +241,7 @@ fn process_one_file(item: &Path, source: &Path, target: &Path, opts: &Opts) -> R
                     || "".to_string(),
                     |ext| ext.to_str().unwrap_or("").to_string()
                 );
-    if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+    if IMAGE_EXTENSIONS.contains(&extension.as_str().to_lowercase().as_str()) {
         process_one_image(item, source, target, opts)
     } else {
         let sub_path = item.strip_prefix(source)?;
@@ -280,7 +300,7 @@ fn repack_output(dir: &tempfile::TempDir, zip: &Path) -> Result<()> {
         Ok(())
     } else {
         let error = format!("`zip` invocation failed\n{}\n",
-        String::from_utf8_lossy(&output.stderr));
+                                    String::from_utf8_lossy(&output.stderr));
         Err(anyhow!(error))
     }
 }
