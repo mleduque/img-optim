@@ -1,7 +1,7 @@
 
 use anyhow::{anyhow, bail};
-use anyhow::{Result};
-use clap::{Parser};
+use anyhow::Result;
+use clap::Parser;
 use dialoguer::Confirm;
 use env_logger::{Env, Target};
 use globwalk::{FileType as GlobFileType, glob_builder};
@@ -9,8 +9,8 @@ use lazy_static::lazy_static;
 use log::{info, debug, warn, error};
 use path_absolutize::*;
 use regex::{Regex, escape};
-use std::fs::{create_dir_all};
-use std::path::{Path};
+use std::fs::create_dir_all;
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Parser, Clone)]
@@ -261,7 +261,7 @@ fn process_one_image(item: &Path, source: &Path, target: &Path, opts: &Opts) -> 
 
     let mut args: Vec<String> = vec![
         "convert".to_string(), item.as_os_str().to_str().unwrap().to_string(),
-        "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("1000x1400^").to_string(),
+        "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("1000x1400>").to_string(),
         "-quality".to_string(), opts.quality.as_deref().unwrap_or("80").to_string(),
     ];
 
