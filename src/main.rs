@@ -18,15 +18,37 @@ use std::process::Command;
 struct Opts {
     source: String,
     target: String,
-    #[clap(long, short)]
+    #[clap(long, short,
+        help = "",
+        long_help = "JPEG/MIFF/PNG/TIFF compression level, 0 to 100, the bigger the better the quality.
+        Default 80.
+        See http://www.graphicsmagick.org/GraphicsMagick.html#details-quality"
+    )]
     quality: Option<String>,
-    #[clap(long, short)]
+    #[clap(long, short,
+        help = "S",
+        long_help = "Specify dimension, offset, and resize options. 
+        Default `1000x1400>`.
+        See http://www.graphicsmagick.org/GraphicsMagick.html#details-geometry"
+    )]
     geometry: Option<String>,
-    #[clap(long, short)]
+    #[clap(long, short,
+        long_help = r#"Add coder/decoder specific options.
+        See http://www.graphicsmagick.org/GraphicsMagick.html#details-define
+        Example: `jpeg:preserve-settings`
+        "#
+    )]
     define: Option<String>,
-    #[clap(long, short)]
+    #[clap(long, short,
+        long_help = format!("Extension of the resulting files.\nOne of {:?}", *IMAGE_EXTENSIONS)
+    )]
     extension: Option<String>,
-    #[clap(long, short)]
+    #[clap(long, short,
+        long_help = r#"Will use a substitution in the input and output names.
+        Example:
+        `img-optim fileXX.zip outputXX.zip --many=XX`
+        will convert file01.zip to output01.zip AND file07.zip tooutput07.zip"#
+    )]
     many: Option<String>,
     #[clap(long, short)]
     no_repack: Option<bool>,
