@@ -1,7 +1,7 @@
 
 use anyhow::{anyhow, bail};
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use dialoguer::Confirm;
 use env_logger::{Env, Target};
 use globwalk::{FileType as GlobFileType, glob_builder};
@@ -12,6 +12,15 @@ use regex::{Regex, escape};
 use std::fs::create_dir_all;
 use std::path::Path;
 use std::process::Command;
+
+#[derive(ValueEnum, Clone, Default, Debug)]
+enum Converter {
+    /// GraphicsMagick
+    #[default]
+    Gm,
+    ///ImageMagick
+    Im
+}
 
 #[derive(Parser, Clone)]
 #[command(version = "1.0", author = "Mickaël Leduque <mleduque@gmail.com>")]
@@ -52,6 +61,12 @@ struct Opts {
     many: Option<String>,
     #[clap(long, short)]
     no_repack: Option<bool>,
+    #[clap(long,short,
+        long_help = "Program use for conversion",
+        value_enum
+    )]
+    #[arg(default_value_t = Converter::Gm)]
+    converter: Converter
 }
 
 fn main() -> Result<()> {
@@ -281,11 +296,22 @@ fn process_one_image(item: &Path, source: &Path, target: &Path, opts: &Opts) -> 
         .unwrap_or("jpg"));
     create_parent(&result)?;
 
-    let mut args: Vec<String> = vec![
-        "convert".to_string(), item.as_os_str().to_str().unwrap().to_string(),
-        "-geometry".to_string(), opts.geometry.as_deref().unwrap_or("1000x1400>").to_string(),
-        "-quality".to_string(), opts.quality.as_deref().unwrap_or("80").to_string(),
-    ];
+    let program = match &opts.converter {
+        Converter::Gm => "gm".to_string(),
+        Converter::Im => "convert-im6".to_string(),
+    };
+
+    let mut args = match &opts.converter {
+        Converter::Gm => vec!["convert".to_string()],
+        Converter::Im => vec![],
+    };
+    args.extend_from_slice(&vec![
+        item.as_os_str().to_str().unwrap().to_string(),
+        "-geometry".to_string(),
+        opts.geometry.as_deref().unwrap_or("1000x1400>").to_string(),
+        "-quality".to_string(),
+        opts.quality.as_deref().unwrap_or("80").to_string(),
+    ]);
 
     if let Some(define) = &opts.define {
         args.push("define".to_string());
@@ -293,7 +319,7 @@ fn process_one_image(item: &Path, source: &Path, target: &Path, opts: &Opts) -> 
     }
     args.push(result.to_str().unwrap().to_string());
 
-    let mut command = Command::new("gm");
+    let mut command = Command::new(program);
     command.args(args);
     debug!("Command: {:?}", command);
 
