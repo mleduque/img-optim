@@ -37,7 +37,7 @@ struct Opts {
     #[clap(long, short,
         help = "S",
         long_help = "Specify dimension, offset, and resize options. 
-        Default `1000x1400>`.
+        Default `1400x1400>`.
         See http://www.graphicsmagick.org/GraphicsMagick.html#details-geometry"
     )]
     geometry: Option<String>,
@@ -308,7 +308,7 @@ fn process_one_image(item: &Path, source: &Path, target: &Path, opts: &Opts) -> 
     args.extend_from_slice(&vec![
         item.as_os_str().to_str().unwrap().to_string(),
         "-geometry".to_string(),
-        opts.geometry.as_deref().unwrap_or("1000x1400>").to_string(),
+        opts.geometry.as_deref().unwrap_or("1400x1400>").to_string(),
         "-quality".to_string(),
         opts.quality.as_deref().unwrap_or("80").to_string(),
     ]);
